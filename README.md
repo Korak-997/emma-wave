@@ -120,3 +120,65 @@ speaker-detector-server/
 ├── .gitignore          # Files to ignore in Git
 └── README.md           # This file
 ```
+
+Here’s the **"Running Tests"** section for your **README.md**:
+
+---
+
+## 🧪 Running Tests
+
+To ensure the diarization API is working correctly, you can run automated tests using **pytest**.
+
+#### **1️⃣ Prerequisites**
+
+Make sure you have:
+
+- Activated your Python virtual environment:
+  ```bash
+  source pyannote-env/bin/activate
+  ```
+- Installed all dependencies:
+  ```bash
+  pip install -r requirements.txt
+  ```
+- A valid **Hugging Face API Token** in your `.env` file.
+
+#### **2️⃣ Running All Tests**
+
+Run all tests using:
+
+```bash
+PYTHONPATH=$(pwd) pytest -s -v tests/
+```
+
+- `-s` → Shows print statements in real time.
+- `-v` → Enables verbose output for better debugging.
+
+#### **3️⃣ Running a Specific Test**
+
+If you want to test only the diarization API, run:
+
+```bash
+PYTHONPATH=$(pwd) pytest -s -v tests/test_diarization.py
+```
+
+#### **4️⃣ Expected Output**
+
+If everything is working, you should see:
+
+```
+✅ Test Passed: Diarization API is working correctly!
+```
+
+#### **5️⃣ Debugging Slow Execution**
+
+The Pyannote model takes time to process. If it seems stuck:
+
+- Make sure the API server is **running** before testing:
+  ```bash
+  uvicorn app.main:app --reload --port 8000
+  ```
+- If it's too slow, **run the API manually** using:
+  ```bash
+  curl -X POST -F "file=@tests/sample_audio.wav" http://127.0.0.1:8000/diarize
+  ```
