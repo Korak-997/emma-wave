@@ -1,0 +1,14 @@
+# Virtual Environment (Do NOT commit this)
+pyannote-env/
+
+# Python cache files
+__pycache__/
+
+# Logs and temporary files
+*.log
+*.pyc
+*.pyo
+*.sqlite3
+
+# Ignore environment variables (Tokens, API Keys)
+.env

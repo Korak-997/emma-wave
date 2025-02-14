@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-dotenv
+python-multipart
+pyannote.audio
+huggingface-hub
+requests
+torch
+torchaudio
+soundfile
