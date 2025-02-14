@@ -8,3 +8,5 @@ requests
 torch
 torchaudio
 soundfile
+pytest
+httpx
