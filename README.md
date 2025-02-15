@@ -1,6 +1,6 @@
-# 🎤 Speaker Detector Server
+# 🎤 EmmaWave
 
-**Speaker Detector Server** is a FastAPI-based service that performs **speaker diarization** (detecting and separating different speakers in an audio file) using **Pyannote-Audio**.
+**EmmaWave** is a FastAPI-based service that performs **speaker diarization** (detecting and separating different speakers in an audio file) using **Pyannote-Audio**.
 
 This guide provides a **step-by-step setup** for installing, running, and developing the project.
 
