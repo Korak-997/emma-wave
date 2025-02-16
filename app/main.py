@@ -1,12 +1,11 @@
-import os
 import logging
-import tempfile
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pyannote.audio import Pipeline
 from app.utils.audio_utils import convert_audio_format, validate_audio_format
 from app.utils.config import get_huggingface_token
 from app.utils.exceptions import InvalidAudioFormatError, AudioProcessingError, ModelLoadingError
+import io
 
 # ✅ Configure Logging
 logging.basicConfig(
@@ -46,19 +45,17 @@ async def diarize_audio(file: UploadFile = File(...)):
     """
     logging.info(f"📥 Received file: {file.filename}")
 
-    # ✅ Save uploaded file temporarily
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_file:
-        temp_filename = temp_file.name
-        temp_file.write(file.file.read())
+    # ✅ Read file into memory
+    audio_bytes = await file.read()
 
     try:
         # ✅ Validate format before processing
-        if not validate_audio_format(temp_filename):
-            temp_filename = convert_audio_format(temp_filename)
+        if not validate_audio_format(audio_bytes):
+            audio_bytes = convert_audio_format(audio_bytes)  # Convert in-memory
 
         # ✅ Process the file using Pyannote
         logging.info("🔄 Processing audio for diarization...")
-        diarization_result = pipeline(temp_filename)
+        diarization_result = pipeline(io.BytesIO(audio_bytes))
         logging.info("✅ Speaker diarization completed!")
 
         # ✅ Extract speaker segments
@@ -75,8 +72,5 @@ async def diarize_audio(file: UploadFile = File(...)):
     except Exception as e:
         logging.error(f"🚨 Error processing audio: {e}")
         raise AudioProcessingError("Unexpected error occurred during processing.")
-    finally:
-        os.remove(temp_filename)
-        logging.info(f"🗑️ Deleted temp file: {temp_filename}")
 
     return {"file": file.filename, "segments": segments}
