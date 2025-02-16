@@ -182,3 +182,11 @@ The Pyannote model takes time to process. If it seems stuck:
   ```bash
   curl -X POST -F "file=@tests/sample_audio.wav" http://127.0.0.1:8000/diarize
   ```
+
+#####
+
+start server on remote machines
+
+```plaintext
+uvicorn app.main:app --host 0.0.0.0 --port 7000 --reload
+```
