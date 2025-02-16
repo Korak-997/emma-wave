@@ -10,3 +10,5 @@ torchaudio
 soundfile
 pytest
 httpx
+numpy
+ffmpeg-python

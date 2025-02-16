@@ -1,4 +1,6 @@
 import logging
+import base64
+import io
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pyannote.audio import Pipeline
@@ -10,7 +12,6 @@ from app.utils.audio_utils import (
 )
 from app.utils.config import get_huggingface_token
 from app.utils.exceptions import InvalidAudioFormatError, AudioProcessingError, ModelLoadingError
-import io
 
 # ✅ Configure Logging
 logging.basicConfig(
@@ -28,7 +29,7 @@ app = FastAPI()
 # ✅ Fix CORS issues for frontend requests
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Change to specific domains later for security
+    allow_origins=["*"],  # Change this later for security
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -48,7 +49,7 @@ async def diarize_audio(file: UploadFile = File(...)):
     """
     Process an uploaded audio file, segment it by speakers, and return results.
     """
-    logging.info(f"📥 Received file: {file.filename}")
+    logging.info(f"📥 Received file: {file.filename}, Content-Type: {file.content_type}")
 
     # ✅ Read file into memory
     original_audio = await file.read()
@@ -85,10 +86,21 @@ async def diarize_audio(file: UploadFile = File(...)):
         logging.error(f"🚨 Error processing audio: {e}")
         raise AudioProcessingError("Unexpected error occurred during processing.")
 
-    # ✅ Return structured response with original audio & segments
+    # ✅ Encode original audio to Base64 to prevent JSON errors
+    original_audio_base64 = base64.b64encode(original_audio).decode("utf-8")
+
+  # ✅ Encode speaker segments into Base64 (Ensure `segment["audio"]` is in bytes)
+    for speaker in speaker_audio_segments:
+        for segment in speaker_audio_segments[speaker]:
+            if isinstance(segment["audio"], str):
+                segment["audio"] = base64.b64encode(segment["audio"].encode("utf-8")).decode("utf-8")
+            else:
+                segment["audio"] = base64.b64encode(segment["audio"]).decode("utf-8")
+
+    # ✅ Return structured response with encoded audio
     return {
         "file": file.filename,
-        "original_audio": original_audio,
+        "original_audio": original_audio_base64,
         "speakers": speaker_audio_segments
     }
 
@@ -107,3 +119,8 @@ async def health_check():
     except Exception as e:
         logging.error(f"🚨 Health check failed: {e}")
         return {"status": "error", "message": str(e)}
+
+# ✅ Start Uvicorn automatically if running standalone
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=7000, reload=True)

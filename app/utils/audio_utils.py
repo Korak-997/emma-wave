@@ -1,15 +1,55 @@
-import logging
-import subprocess
-import soundfile as sf
 import io
 import uuid
+import base64
 import logging
+import soundfile as sf
 import numpy as np
-from app.utils.exceptions import InvalidAudioFormatError, AudioProcessingError
+import ffmpeg
 
+from app.utils.exceptions import AudioProcessingError
 
+def convert_audio_format(input_audio):
+    """
+    Converts audio to 16-bit PCM, 16kHz, mono if necessary.
 
-# ✅ Cut audio into segments without modifying the original
+    Args:
+    - input_audio (bytes): The input audio file in bytes.
+
+    Returns:
+    - Converted audio in bytes (16-bit PCM, 16kHz, mono)
+    """
+    try:
+        audio_buffer = io.BytesIO(input_audio)
+
+        # ✅ Read audio using SoundFile
+        audio_data, samplerate = sf.read(audio_buffer, dtype="int16")
+
+        # ✅ Check format (Must be: 16-bit PCM, 16kHz, mono)
+        if samplerate == 16000 and audio_data.ndim == 1:
+            logging.info("✅ Audio is already in the correct format.")
+            return input_audio
+
+        logging.warning(f"⚠️ Audio needs conversion (Found: {samplerate}Hz, Channels: {audio_data.shape[1] if audio_data.ndim > 1 else 1})")
+
+        # ✅ Convert using FFmpeg
+        output_buffer = io.BytesIO()
+        process = (
+            ffmpeg
+            .input("pipe:0")
+            .output("pipe:1", format="wav", acodec="pcm_s16le", ar="16000", ac="1")
+            .run_async(pipe_stdin=True, pipe_stdout=True, pipe_stderr=True)
+        )
+
+        output_audio, _ = process.communicate(input_audio)
+
+        logging.info("✅ Audio successfully converted in-memory.")
+        return output_audio
+
+    except Exception as e:
+        logging.error(f"🚨 Audio conversion failed: {e}")
+        raise AudioProcessingError("Audio format conversion failed.")
+
+# ✅ Extract speaker segments without modifying the original file
 def extract_speaker_segments(original_audio, segments):
     """
     Extracts and assigns audio segments to respective speakers.
@@ -44,7 +84,7 @@ def extract_speaker_segments(original_audio, segments):
             # ✅ Assign unique ID and store segment
             segment_entry = {
                 "id": str(uuid.uuid4()),
-                "audio": output_buffer.getvalue(),
+                "audio": base64.b64encode(output_buffer.getvalue()).decode("utf-8"),  # ✅ Encode in Base64
                 "start": segment["start"],
                 "end": segment["end"]
             }
@@ -63,70 +103,38 @@ def extract_speaker_segments(original_audio, segments):
 
 
 
-
-
-
-
-
-
-
-
-# ✅ Validate audio format (In-Memory)
-def validate_audio_format(audio_bytes):
+def validate_audio_format(input_audio):
     """
-    Checks if the audio is already in the correct format: 16-bit PCM, 16kHz, mono.
-    Returns True if valid, False otherwise.
+    Validates if the audio is in the correct format: 16-bit PCM, 16kHz, mono.
+
+    Args:
+    - input_audio (bytes): The input audio file in bytes.
+
+    Returns:
+    - (bool): True if the format is correct, otherwise False.
     """
     try:
-        audio_file = io.BytesIO(audio_bytes)  # Read audio from memory
-        data, samplerate = sf.read(audio_file)
-        if samplerate == 16000 and data.ndim == 1:
-            logging.info("✅ Audio is already in the correct format.")
+        audio_buffer = io.BytesIO(input_audio)
+        audio_data, samplerate = sf.read(audio_buffer, dtype="int16")
+
+        # ✅ Check format
+        if samplerate == 16000 and audio_data.ndim == 1:
             return True
-        else:
-            logging.warning(f"⚠️ Audio needs conversion (Found: {samplerate}Hz, Channels: {data.ndim})")
-            return False
+        return False
+
     except Exception as e:
-        logging.error(f"🚨 Could not read audio file: {e}")
-        raise InvalidAudioFormatError("Unable to read the audio file. Ensure it's a valid audio format.")
+        logging.error(f"🚨 Audio validation failed: {e}")
+        return False
 
-# ✅ Convert audio to required format (In-Memory)
-def convert_audio_format(audio_bytes):
+
+
+def merge_speaker_segments(segments, gap_threshold=0.5):
     """
-    Converts an in-memory audio file to 16-bit PCM, 16kHz, mono using ffmpeg.
-    Returns the converted audio as bytes.
-    """
-    try:
-        input_audio = io.BytesIO(audio_bytes)  # Read from memory
-        output_audio = io.BytesIO()
-
-        # Run ffmpeg conversion
-        process = subprocess.run(
-            ["ffmpeg", "-i", "pipe:0", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", "-f", "wav", "pipe:1"],
-            input=input_audio.read(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=True
-        )
-
-        output_audio.write(process.stdout)
-        output_audio.seek(0)  # Reset cursor
-
-        logging.info("✅ Audio successfully converted in-memory.")
-        return output_audio.getvalue()  # Return bytes
-    except subprocess.CalledProcessError as e:
-        logging.error(f"🚨 Audio conversion failed: {e}")
-        raise AudioProcessingError("Audio format conversion failed. Make sure FFmpeg is installed and working.")
-
-# ✅ Merge speaker segments to remove small gaps
-def merge_speaker_segments(segments, min_gap=0.5, min_duration=1.0):
-    """
-    Merges consecutive speaker segments if the gap between them is small.
+    Merges consecutive speaker segments if the gap between them is below a threshold.
 
     Args:
     - segments (list): List of speaker segments [{speaker, start, end}]
-    - min_gap (float): Maximum allowed gap between segments (seconds)
-    - min_duration (float): Minimum segment duration (seconds)
+    - gap_threshold (float): Maximum gap (in seconds) allowed for merging.
 
     Returns:
     - List of merged speaker segments
@@ -134,24 +142,22 @@ def merge_speaker_segments(segments, min_gap=0.5, min_duration=1.0):
     if not segments:
         return []
 
+    # ✅ Sort segments by start time
+    segments.sort(key=lambda x: x["start"])
+
     merged_segments = []
     current_segment = segments[0]
 
     for next_segment in segments[1:]:
-        # If the speaker is the same and the gap is small, merge segments
-        if (
-            current_segment["speaker"] == next_segment["speaker"] and
-            (next_segment["start"] - current_segment["end"]) <= min_gap
-        ):
+        if current_segment["speaker"] == next_segment["speaker"] and \
+           (next_segment["start"] - current_segment["end"]) <= gap_threshold:
+            # ✅ Merge segments
             current_segment["end"] = next_segment["end"]
         else:
-            # If segment is long enough, add it
-            if (current_segment["end"] - current_segment["start"]) >= min_duration:
-                merged_segments.append(current_segment)
+            merged_segments.append(current_segment)
             current_segment = next_segment
 
-    # Add the last segment if it meets the duration requirement
-    if (current_segment["end"] - current_segment["start"]) >= min_duration:
-        merged_segments.append(current_segment)
+    merged_segments.append(current_segment)
 
+    logging.info(f"✅ Merged {len(segments)} segments into {len(merged_segments)}.")
     return merged_segments
