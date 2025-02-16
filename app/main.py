@@ -2,7 +2,7 @@ import logging
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pyannote.audio import Pipeline
-from app.utils.audio_utils import convert_audio_format, validate_audio_format
+from app.utils.audio_utils import convert_audio_format, validate_audio_format, merge_speaker_segments
 from app.utils.config import get_huggingface_token
 from app.utils.exceptions import InvalidAudioFormatError, AudioProcessingError, ModelLoadingError
 import io
@@ -59,11 +59,15 @@ async def diarize_audio(file: UploadFile = File(...)):
         logging.info("✅ Speaker diarization completed!")
 
         # ✅ Extract speaker segments
-        segments = [
+        raw_segments = [
             {"speaker": speaker, "start": round(segment.start, 2), "end": round(segment.end, 2)}
             for segment, _, speaker in diarization_result.itertracks(yield_label=True)
         ]
-        logging.info(f"📊 Processed {len(segments)} segments from {file.filename}")
+
+        # ✅ Merge speaker segments to remove small gaps
+        merged_segments = merge_speaker_segments(raw_segments)
+
+        logging.info(f"📊 Processed {len(merged_segments)} merged segments from {file.filename}")
 
     except InvalidAudioFormatError as e:
         raise e  # Return directly since it's a 400 error.
@@ -73,4 +77,4 @@ async def diarize_audio(file: UploadFile = File(...)):
         logging.error(f"🚨 Error processing audio: {e}")
         raise AudioProcessingError("Unexpected error occurred during processing.")
 
-    return {"file": file.filename, "segments": segments}
+    return {"file": file.filename, "segments": merged_segments}

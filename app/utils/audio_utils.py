@@ -50,3 +50,41 @@ def convert_audio_format(audio_bytes):
     except subprocess.CalledProcessError as e:
         logging.error(f"🚨 Audio conversion failed: {e}")
         raise AudioProcessingError("Audio format conversion failed. Make sure FFmpeg is installed and working.")
+
+# ✅ Merge speaker segments to remove small gaps
+def merge_speaker_segments(segments, min_gap=0.5, min_duration=1.0):
+    """
+    Merges consecutive speaker segments if the gap between them is small.
+
+    Args:
+    - segments (list): List of speaker segments [{speaker, start, end}]
+    - min_gap (float): Maximum allowed gap between segments (seconds)
+    - min_duration (float): Minimum segment duration (seconds)
+
+    Returns:
+    - List of merged speaker segments
+    """
+    if not segments:
+        return []
+
+    merged_segments = []
+    current_segment = segments[0]
+
+    for next_segment in segments[1:]:
+        # If the speaker is the same and the gap is small, merge segments
+        if (
+            current_segment["speaker"] == next_segment["speaker"] and
+            (next_segment["start"] - current_segment["end"]) <= min_gap
+        ):
+            current_segment["end"] = next_segment["end"]
+        else:
+            # If segment is long enough, add it
+            if (current_segment["end"] - current_segment["start"]) >= min_duration:
+                merged_segments.append(current_segment)
+            current_segment = next_segment
+
+    # Add the last segment if it meets the duration requirement
+    if (current_segment["end"] - current_segment["start"]) >= min_duration:
+        merged_segments.append(current_segment)
+
+    return merged_segments
