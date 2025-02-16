@@ -78,3 +78,20 @@ async def diarize_audio(file: UploadFile = File(...)):
         raise AudioProcessingError("Unexpected error occurred during processing.")
 
     return {"file": file.filename, "segments": merged_segments}
+
+
+@app.get("/health")
+async def health_check():
+    """
+    Health check endpoint to ensure API and diarization model are running correctly.
+    """
+    try:
+        # ✅ Check if the diarization model is loaded
+        if not pipeline:
+            raise RuntimeError("Diarization model is not loaded.")
+
+        return {"status": "ok", "model": "loaded"}
+
+    except Exception as e:
+        logging.error(f"🚨 Health check failed: {e}")
+        return {"status": "error", "message": str(e)}
