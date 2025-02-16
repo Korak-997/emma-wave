@@ -22,17 +22,16 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()],
 )
 
-# ✅ Create folder for storing audio segments
+# ✅ Load environment variables
 AUDIO_SAVE_PATH = "saved_audio"
+SERVER_IP = os.getenv("SERVER_IP", "127.0.0.1")  # Default to localhost if not set
+AUDIO_URL_BASE = f"http://{SERVER_IP}:7000/audio"
+
+# ✅ Ensure the folder for saving audio exists
 os.makedirs(AUDIO_SAVE_PATH, exist_ok=True)
 
 # ✅ Load Hugging Face Token
 HUGGINGFACE_TOKEN = get_huggingface_token()
-
-
-
-
-AUDIO_FOLDER = AUDIO_SAVE_PATH  # Ensure this folder contains the WAV files
 
 # ✅ Initialize FastAPI app
 app = FastAPI()
@@ -48,14 +47,13 @@ app.add_middleware(
 
 @app.get("/audio/{filename}")
 async def get_audio(filename: str):
-    file_path = os.path.join(AUDIO_FOLDER, filename)
+    file_path = os.path.join(AUDIO_SAVE_PATH, filename)
 
     # Check if file exists before serving
     if not os.path.exists(file_path):
         return {"error": "File not found"}
 
     return FileResponse(file_path, media_type="audio/wav")
-
 
 # ✅ Load the diarization pipeline
 try:
@@ -96,7 +94,7 @@ async def diarize_audio(file: UploadFile = File(...)):
         merged_segments = merge_speaker_segments(raw_segments)
 
         # ✅ Extract and save speaker-specific audio clips
-        speaker_audio_segments = extract_speaker_segments(original_audio, merged_segments, AUDIO_SAVE_PATH)
+        speaker_audio_segments = extract_speaker_segments(original_audio, merged_segments, AUDIO_SAVE_PATH, AUDIO_URL_BASE)
 
         logging.info(f"📊 Processed {len(merged_segments)} merged segments from {file.filename}")
 
@@ -113,16 +111,6 @@ async def diarize_audio(file: UploadFile = File(...)):
         "file": file.filename,
         "speakers": speaker_audio_segments
     }
-
-@app.get("/audio/{filename}")
-async def get_audio_file(filename: str):
-    """
-    Endpoint to serve saved audio segments.
-    """
-    file_path = os.path.join(AUDIO_SAVE_PATH, filename)
-    if os.path.exists(file_path):
-        return FileResponse(file_path, media_type="audio/wav")
-    return {"error": "File not found"}, 404
 
 @app.get("/health")
 async def health_check():
