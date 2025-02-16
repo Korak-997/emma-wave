@@ -1,11 +1,12 @@
 import os
 import logging
 import tempfile
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pyannote.audio import Pipeline
 from app.utils.audio_utils import convert_audio_format, validate_audio_format
 from app.utils.config import get_huggingface_token
+from app.utils.exceptions import InvalidAudioFormatError, AudioProcessingError, ModelLoadingError
 
 # ✅ Configure Logging
 logging.basicConfig(
@@ -36,7 +37,7 @@ try:
     logging.info("✅ Pyannote model loaded successfully!")
 except Exception as e:
     logging.error(f"🚨 Failed to load Pyannote model: {e}")
-    raise RuntimeError("Failed to load diarization model!")
+    raise ModelLoadingError()
 
 @app.post("/diarize")
 async def diarize_audio(file: UploadFile = File(...)):
@@ -67,9 +68,13 @@ async def diarize_audio(file: UploadFile = File(...)):
         ]
         logging.info(f"📊 Processed {len(segments)} segments from {file.filename}")
 
+    except InvalidAudioFormatError as e:
+        raise e  # Return directly since it's a 400 error.
+    except AudioProcessingError as e:
+        raise e
     except Exception as e:
         logging.error(f"🚨 Error processing audio: {e}")
-        raise HTTPException(status_code=500, detail="Error processing audio file.")
+        raise AudioProcessingError("Unexpected error occurred during processing.")
     finally:
         os.remove(temp_filename)
         logging.info(f"🗑️ Deleted temp file: {temp_filename}")

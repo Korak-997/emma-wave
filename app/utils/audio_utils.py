@@ -2,6 +2,7 @@ import os
 import logging
 import subprocess
 import soundfile as sf
+from app.utils.exceptions import InvalidAudioFormatError, AudioProcessingError
 
 # ✅ Validate audio format
 def validate_audio_format(input_file):
@@ -19,7 +20,7 @@ def validate_audio_format(input_file):
             return False
     except Exception as e:
         logging.error(f"🚨 Could not read audio file {input_file}: {e}")
-        return False
+        raise InvalidAudioFormatError("Unable to read the audio file. Ensure it's a valid audio format.")
 
 # ✅ Convert audio to required format
 def convert_audio_format(input_file):
@@ -41,4 +42,4 @@ def convert_audio_format(input_file):
         return output_file
     except subprocess.CalledProcessError as e:
         logging.error(f"🚨 Audio conversion failed: {e}")
-        raise Exception("Audio format conversion failed.")
+        raise AudioProcessingError("Audio format conversion failed. Make sure FFmpeg is installed and working.")
