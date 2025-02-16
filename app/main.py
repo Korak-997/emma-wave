@@ -2,7 +2,12 @@ import logging
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pyannote.audio import Pipeline
-from app.utils.audio_utils import convert_audio_format, validate_audio_format, merge_speaker_segments
+from app.utils.audio_utils import (
+    convert_audio_format,
+    validate_audio_format,
+    merge_speaker_segments,
+    extract_speaker_segments
+)
 from app.utils.config import get_huggingface_token
 from app.utils.exceptions import InvalidAudioFormatError, AudioProcessingError, ModelLoadingError
 import io
@@ -41,21 +46,21 @@ except Exception as e:
 @app.post("/diarize")
 async def diarize_audio(file: UploadFile = File(...)):
     """
-    Process an uploaded audio file and return speaker diarization results.
+    Process an uploaded audio file, segment it by speakers, and return results.
     """
     logging.info(f"📥 Received file: {file.filename}")
 
     # ✅ Read file into memory
-    audio_bytes = await file.read()
+    original_audio = await file.read()
 
     try:
         # ✅ Validate format before processing
-        if not validate_audio_format(audio_bytes):
-            audio_bytes = convert_audio_format(audio_bytes)  # Convert in-memory
+        if not validate_audio_format(original_audio):
+            original_audio = convert_audio_format(original_audio)  # Convert in-memory
 
         # ✅ Process the file using Pyannote
         logging.info("🔄 Processing audio for diarization...")
-        diarization_result = pipeline(io.BytesIO(audio_bytes))
+        diarization_result = pipeline(io.BytesIO(original_audio))
         logging.info("✅ Speaker diarization completed!")
 
         # ✅ Extract speaker segments
@@ -67,18 +72,25 @@ async def diarize_audio(file: UploadFile = File(...)):
         # ✅ Merge speaker segments to remove small gaps
         merged_segments = merge_speaker_segments(raw_segments)
 
+        # ✅ Extract speaker-specific audio clips
+        speaker_audio_segments = extract_speaker_segments(original_audio, merged_segments)
+
         logging.info(f"📊 Processed {len(merged_segments)} merged segments from {file.filename}")
 
     except InvalidAudioFormatError as e:
-        raise e  # Return directly since it's a 400 error.
+        raise e
     except AudioProcessingError as e:
         raise e
     except Exception as e:
         logging.error(f"🚨 Error processing audio: {e}")
         raise AudioProcessingError("Unexpected error occurred during processing.")
 
-    return {"file": file.filename, "segments": merged_segments}
-
+    # ✅ Return structured response with original audio & segments
+    return {
+        "file": file.filename,
+        "original_audio": original_audio,
+        "speakers": speaker_audio_segments
+    }
 
 @app.get("/health")
 async def health_check():

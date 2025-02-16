@@ -2,7 +2,74 @@ import logging
 import subprocess
 import soundfile as sf
 import io
+import uuid
+import logging
+import numpy as np
 from app.utils.exceptions import InvalidAudioFormatError, AudioProcessingError
+
+
+
+# ✅ Cut audio into segments without modifying the original
+def extract_speaker_segments(original_audio, segments):
+    """
+    Extracts and assigns audio segments to respective speakers.
+
+    Args:
+    - original_audio (bytes): The original full audio in bytes.
+    - segments (list): List of merged speaker segments [{speaker, start, end}]
+
+    Returns:
+    - Dictionary with speaker-wise segmented audio
+    """
+    try:
+        # ✅ Load original audio into memory
+        audio_buffer = io.BytesIO(original_audio)
+        audio_data, samplerate = sf.read(audio_buffer, dtype="int16")
+
+        speaker_clips = {}
+
+        for segment in segments:
+            speaker = segment["speaker"]
+            start_sample = int(segment["start"] * samplerate)
+            end_sample = int(segment["end"] * samplerate)
+
+            # ✅ Extract segment without modifying the original
+            segment_audio = audio_data[start_sample:end_sample]
+
+            # ✅ Save in memory as WAV format
+            output_buffer = io.BytesIO()
+            sf.write(output_buffer, segment_audio, samplerate, format="WAV")
+            output_buffer.seek(0)
+
+            # ✅ Assign unique ID and store segment
+            segment_entry = {
+                "id": str(uuid.uuid4()),
+                "audio": output_buffer.getvalue(),
+                "start": segment["start"],
+                "end": segment["end"]
+            }
+
+            if speaker not in speaker_clips:
+                speaker_clips[speaker] = []
+
+            speaker_clips[speaker].append(segment_entry)
+
+        logging.info("✅ Successfully extracted and assigned speaker segments.")
+        return speaker_clips
+
+    except Exception as e:
+        logging.error(f"🚨 Error extracting speaker segments: {e}")
+        raise AudioProcessingError("Failed to extract speaker segments.")
+
+
+
+
+
+
+
+
+
+
 
 # ✅ Validate audio format (In-Memory)
 def validate_audio_format(audio_bytes):
