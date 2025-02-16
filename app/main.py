@@ -1,8 +1,10 @@
 import logging
-import base64
 import io
+import os
+import uuid
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pyannote.audio import Pipeline
 from app.utils.audio_utils import (
     convert_audio_format,
@@ -20,8 +22,17 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()],
 )
 
+# ✅ Create folder for storing audio segments
+AUDIO_SAVE_PATH = "saved_audio"
+os.makedirs(AUDIO_SAVE_PATH, exist_ok=True)
+
 # ✅ Load Hugging Face Token
 HUGGINGFACE_TOKEN = get_huggingface_token()
+
+
+
+
+AUDIO_FOLDER = AUDIO_SAVE_PATH  # Ensure this folder contains the WAV files
 
 # ✅ Initialize FastAPI app
 app = FastAPI()
@@ -34,6 +45,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/audio/{filename}")
+async def get_audio(filename: str):
+    file_path = os.path.join(AUDIO_FOLDER, filename)
+
+    # Check if file exists before serving
+    if not os.path.exists(file_path):
+        return {"error": "File not found"}
+
+    return FileResponse(file_path, media_type="audio/wav")
+
 
 # ✅ Load the diarization pipeline
 try:
@@ -73,8 +95,8 @@ async def diarize_audio(file: UploadFile = File(...)):
         # ✅ Merge speaker segments to remove small gaps
         merged_segments = merge_speaker_segments(raw_segments)
 
-        # ✅ Extract speaker-specific audio clips
-        speaker_audio_segments = extract_speaker_segments(original_audio, merged_segments)
+        # ✅ Extract and save speaker-specific audio clips
+        speaker_audio_segments = extract_speaker_segments(original_audio, merged_segments, AUDIO_SAVE_PATH)
 
         logging.info(f"📊 Processed {len(merged_segments)} merged segments from {file.filename}")
 
@@ -86,23 +108,21 @@ async def diarize_audio(file: UploadFile = File(...)):
         logging.error(f"🚨 Error processing audio: {e}")
         raise AudioProcessingError("Unexpected error occurred during processing.")
 
-    # ✅ Encode original audio to Base64 to prevent JSON errors
-    original_audio_base64 = base64.b64encode(original_audio).decode("utf-8")
-
-  # ✅ Encode speaker segments into Base64 (Ensure `segment["audio"]` is in bytes)
-    for speaker in speaker_audio_segments:
-        for segment in speaker_audio_segments[speaker]:
-            if isinstance(segment["audio"], str):
-                segment["audio"] = base64.b64encode(segment["audio"].encode("utf-8")).decode("utf-8")
-            else:
-                segment["audio"] = base64.b64encode(segment["audio"]).decode("utf-8")
-
-    # ✅ Return structured response with encoded audio
+    # ✅ Return structured response with file URLs
     return {
         "file": file.filename,
-        "original_audio": original_audio_base64,
         "speakers": speaker_audio_segments
     }
+
+@app.get("/audio/{filename}")
+async def get_audio_file(filename: str):
+    """
+    Endpoint to serve saved audio segments.
+    """
+    file_path = os.path.join(AUDIO_SAVE_PATH, filename)
+    if os.path.exists(file_path):
+        return FileResponse(file_path, media_type="audio/wav")
+    return {"error": "File not found"}, 404
 
 @app.get("/health")
 async def health_check():

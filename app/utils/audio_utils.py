@@ -5,8 +5,11 @@ import logging
 import soundfile as sf
 import numpy as np
 import ffmpeg
+import os
 
 from app.utils.exceptions import AudioProcessingError
+
+
 
 def convert_audio_format(input_audio):
     """
@@ -49,17 +52,17 @@ def convert_audio_format(input_audio):
         logging.error(f"🚨 Audio conversion failed: {e}")
         raise AudioProcessingError("Audio format conversion failed.")
 
-# ✅ Extract speaker segments without modifying the original file
-def extract_speaker_segments(original_audio, segments):
+def extract_speaker_segments(original_audio, segments, save_path):
     """
-    Extracts and assigns audio segments to respective speakers.
+    Extracts and saves speaker segments as individual files.
 
     Args:
     - original_audio (bytes): The original full audio in bytes.
     - segments (list): List of merged speaker segments [{speaker, start, end}]
+    - save_path (str): Directory to save extracted audio files.
 
     Returns:
-    - Dictionary with speaker-wise segmented audio
+    - Dictionary with speaker-wise segmented audio URLs
     """
     try:
         # ✅ Load original audio into memory
@@ -68,7 +71,10 @@ def extract_speaker_segments(original_audio, segments):
 
         speaker_clips = {}
 
-        for segment in segments:
+        # ✅ Ensure save directory exists
+        os.makedirs(save_path, exist_ok=True)
+
+        for idx, segment in enumerate(segments):
             speaker = segment["speaker"]
             start_sample = int(segment["start"] * samplerate)
             end_sample = int(segment["end"] * samplerate)
@@ -76,15 +82,16 @@ def extract_speaker_segments(original_audio, segments):
             # ✅ Extract segment without modifying the original
             segment_audio = audio_data[start_sample:end_sample]
 
-            # ✅ Save in memory as WAV format
-            output_buffer = io.BytesIO()
-            sf.write(output_buffer, segment_audio, samplerate, format="WAV")
-            output_buffer.seek(0)
+            # ✅ Generate unique filename
+            filename = f"segment_{idx+1}.wav"
+            file_path = os.path.join(save_path, filename)
 
-            # ✅ Assign unique ID and store segment
+            # ✅ Save segment to disk
+            sf.write(file_path, segment_audio, samplerate, format="WAV")
+
             segment_entry = {
                 "id": str(uuid.uuid4()),
-                "audio": base64.b64encode(output_buffer.getvalue()).decode("utf-8"),  # ✅ Encode in Base64
+                "audio_url": f"http://127.0.0.1:7000/audio/{filename}",
                 "start": segment["start"],
                 "end": segment["end"]
             }
@@ -94,13 +101,12 @@ def extract_speaker_segments(original_audio, segments):
 
             speaker_clips[speaker].append(segment_entry)
 
-        logging.info("✅ Successfully extracted and assigned speaker segments.")
+        logging.info("✅ Successfully saved and assigned speaker segments.")
         return speaker_clips
 
     except Exception as e:
         logging.error(f"🚨 Error extracting speaker segments: {e}")
         raise AudioProcessingError("Failed to extract speaker segments.")
-
 
 
 def validate_audio_format(input_audio):
