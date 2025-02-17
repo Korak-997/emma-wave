@@ -6,7 +6,8 @@ import time
 import datetime
 import traceback
 import psutil
-import asyncio  # Use asyncio for better performance
+import asyncio
+import torch  # Import PyTorch for GPU handling
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -26,6 +27,7 @@ AUDIO_SAVE_PATH = "saved_audio"
 SERVER_IP = os.getenv("SERVER_IP", "127.0.0.1")  # Default to localhost if not set
 AUDIO_URL_BASE = f"http://{SERVER_IP}:7000/audio"
 ENABLE_LOGGING = os.getenv("ENABLE_LOGGING", "true").lower() == "true"  # Control logging
+USE_GPU = os.getenv("USE_GPU", "false").lower() == "true"  # Use GPU if available
 
 # ✅ Ensure the folder for saving audio exists
 os.makedirs(AUDIO_SAVE_PATH, exist_ok=True)
@@ -45,6 +47,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ✅ Check GPU availability
+GPU_AVAILABLE = torch.cuda.is_available()
+if USE_GPU and not GPU_AVAILABLE:
+    logging.warning("⚠️ USE_GPU is enabled, but no GPU is available. Falling back to CPU.")
+
+# ✅ Load the diarization pipeline
+try:
+    logging.info("⏳ Loading Pyannote Speaker Diarization Model...")
+    pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization", use_auth_token=HUGGINGFACE_TOKEN)
+
+    # ✅ Move model to GPU if enabled
+    if USE_GPU and GPU_AVAILABLE:
+        logging.info("🚀 Moving Pyannote model to GPU...")
+        pipeline.to(torch.device("cuda"))  # ✅ FIXED DEVICE ISSUE
+
+    logging.info("✅ Pyannote model loaded successfully!")
+except TypeError as te:
+    logging.error(f"🚨 GPU Device Error: {te}")
+    logging.warning("⚠️ Ensure that `pipeline.to(torch.device('cuda'))` is correctly applied.")
+    raise ModelLoadingError()
+except Exception as e:
+    logging.error(f"🚨 Failed to load Pyannote model: {e}")
+    raise ModelLoadingError()
+
+
 @app.get("/audio/{filename}")
 async def get_audio(filename: str):
     file_path = os.path.join(AUDIO_SAVE_PATH, filename)
@@ -52,14 +79,6 @@ async def get_audio(filename: str):
         return {"error": "File not found"}
     return FileResponse(file_path, media_type="audio/wav")
 
-# ✅ Load the diarization pipeline
-try:
-    logging.info("⏳ Loading Pyannote Speaker Diarization Model...")
-    pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization", use_auth_token=HUGGINGFACE_TOKEN)
-    logging.info("✅ Pyannote model loaded successfully!")
-except Exception as e:
-    logging.error(f"🚨 Failed to load Pyannote model: {e}")
-    raise ModelLoadingError()
 
 @app.post("/diarize")
 async def diarize_audio(file: UploadFile = File(...)):
@@ -100,7 +119,9 @@ async def diarize_audio(file: UploadFile = File(...)):
                     })
             asyncio.create_task(collect_metrics())  # Run metrics collection in the background
 
-        diarization_result = pipeline(io.BytesIO(original_audio))
+        # ✅ Use GPU for Pyannote, but keep audio input format unchanged
+        diarization_result = pipeline(io.BytesIO(original_audio))  # ✅ FIXED INPUT ERROR
+
         logging.info("✅ Speaker diarization completed!")
         step_2_end = time.time()
 
