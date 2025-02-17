@@ -5,12 +5,26 @@ import uuid
 import psutil
 from datetime import datetime
 
-# ✅ Define logs directory at the root level of the project
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))  # Go up to project root
-LOGS_DIR = os.path.join(BASE_DIR, "logs")  # Ensure it uses the correct logs folder
+try:
+    import torch
+    from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetUtilizationRates, \
+        nvmlDeviceGetMemoryInfo, nvmlDeviceGetTemperature, nvmlSystemGetDriverVersion, nvmlShutdown, \
+        NVML_TEMPERATURE_GPU
+
+    # Initialize NVML (NVIDIA Management Library)
+    nvmlInit()
+    GPU_AVAILABLE = torch.cuda.is_available()
+    GPU_HANDLE = nvmlDeviceGetHandleByIndex(0) if GPU_AVAILABLE else None
+
+except ImportError:
+    GPU_AVAILABLE = False
+    GPU_HANDLE = None
+
 
 # ✅ Ensure logs directory exists
+LOGS_DIR = "logs"
 os.makedirs(LOGS_DIR, exist_ok=True)
+
 
 def get_system_metrics():
     """
@@ -24,6 +38,25 @@ def get_system_metrics():
         "ram_usage_percent": psutil.virtual_memory().percent,
         "disk_usage_percent": psutil.disk_usage("/").percent
     }
+
+
+def get_gpu_metrics():
+    """
+    Captures GPU utilization, memory usage, and temperature if a GPU is available.
+
+    Returns:
+    - dict: GPU metrics (utilization, memory usage, temperature), or None if GPU is unavailable.
+    """
+    if not GPU_AVAILABLE:
+        return {"gpu_used": False}
+
+    return {
+        "gpu_used": True,
+        "gpu_utilization_percent": nvmlDeviceGetUtilizationRates(GPU_HANDLE).gpu,
+        "gpu_memory_used_mb": nvmlDeviceGetMemoryInfo(GPU_HANDLE).used // (1024 * 1024),
+        "gpu_temperature_celsius": nvmlDeviceGetTemperature(GPU_HANDLE, NVML_TEMPERATURE_GPU)
+    }
+
 
 def save_request_log(data: dict):
     """
