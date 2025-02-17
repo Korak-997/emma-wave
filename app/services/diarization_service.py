@@ -2,6 +2,7 @@ import logging
 import io
 import time
 import torch
+import os
 import soundfile as sf
 from pyannote.audio import Pipeline
 from app.utils.audio_utils import (
@@ -12,19 +13,26 @@ from app.utils.audio_utils import (
 )
 from app.utils.config import get_huggingface_token
 
-USE_GPU = torch.cuda.is_available()
+
+# ✅ Load Environment Variable
+USE_GPU = os.getenv("USE_GPU", "false").lower() == "true"  # Convert to boolean
 
 class DiarizationProcessor:
     def __init__(self):
         self.pipeline = self.load_pipeline()
 
     def load_pipeline(self):
-        """Load Pyannote model and move to GPU if available."""
+        """Load Pyannote model and respect GPU/CPU setting."""
         logging.info("⏳ Loading Pyannote Speaker Diarization Model...")
         pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization", use_auth_token=get_huggingface_token())
-        if USE_GPU:
-            pipeline.to(torch.device("cuda"))
+
+        if USE_GPU and torch.cuda.is_available():
+            pipeline.to(torch.device("cuda"))  # ✅ Use GPU
             logging.info("🚀 Pyannote model moved to GPU.")
+        else:
+            pipeline.to(torch.device("cpu"))  # ✅ Force CPU mode
+            logging.info("⚡ Pyannote model running on CPU.")
+
         return pipeline
 
     async def process_audio(self, file, request_id):
