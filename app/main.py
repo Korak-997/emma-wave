@@ -5,8 +5,8 @@ import uuid
 import time
 import datetime
 import traceback
-import threading
 import psutil
+import asyncio  # Use asyncio for better performance
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -21,17 +21,11 @@ from app.utils.config import get_huggingface_token
 from app.utils.exceptions import InvalidAudioFormatError, AudioProcessingError, ModelLoadingError
 from app.utils.logging_utils import save_request_log, get_system_metrics
 
-# ✅ Configure Logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler()],
-)
-
 # ✅ Load environment variables
 AUDIO_SAVE_PATH = "saved_audio"
 SERVER_IP = os.getenv("SERVER_IP", "127.0.0.1")  # Default to localhost if not set
 AUDIO_URL_BASE = f"http://{SERVER_IP}:7000/audio"
+ENABLE_LOGGING = os.getenv("ENABLE_LOGGING", "true").lower() == "true"  # Control logging
 
 # ✅ Ensure the folder for saving audio exists
 os.makedirs(AUDIO_SAVE_PATH, exist_ok=True)
@@ -67,26 +61,15 @@ except Exception as e:
     logging.error(f"🚨 Failed to load Pyannote model: {e}")
     raise ModelLoadingError()
 
-def collect_system_metrics(during_processing_metrics, stop_event):
-    """
-    Collects system metrics every 5 seconds until diarization finishes.
-    """
-    while not stop_event.is_set():
-        time.sleep(5)
-        during_processing_metrics.append({
-            "timestamp": datetime.datetime.now().isoformat(),
-            "system": get_system_metrics(),
-        })
-
 @app.post("/diarize")
 async def diarize_audio(file: UploadFile = File(...)):
     """
     Process an uploaded audio file, segment it by speakers, and return results.
-    Tracks performance and system resource usage.
+    Tracks performance and system resource usage if logging is enabled.
     """
     request_id = str(uuid.uuid4())
     start_time = time.time()
-    initial_metrics = get_system_metrics()
+    initial_metrics = get_system_metrics() if ENABLE_LOGGING else {}
 
     logging.info(f"📥 Received file: {file.filename}, Content-Type: {file.content_type}")
 
@@ -104,20 +87,21 @@ async def diarize_audio(file: UploadFile = File(...)):
         step_2_start = time.time()
         during_processing_metrics = []
 
-        # ✅ Start background system metrics collection
-        stop_event = threading.Event()
-        metrics_thread = threading.Thread(target=collect_system_metrics, args=(during_processing_metrics, stop_event))
-        metrics_thread.start()
-
         # ✅ Start diarization process
         logging.info("🔄 Processing audio for diarization...")
+
+        if ENABLE_LOGGING:
+            async def collect_metrics():
+                while time.time() - step_2_start < 5:  # Collect every 5 seconds
+                    await asyncio.sleep(0.1)  # Non-blocking alternative to time.sleep
+                    during_processing_metrics.append({
+                        "timestamp": datetime.datetime.now().isoformat(),
+                        "system": get_system_metrics(),
+                    })
+            asyncio.create_task(collect_metrics())  # Run metrics collection in the background
+
         diarization_result = pipeline(io.BytesIO(original_audio))
         logging.info("✅ Speaker diarization completed!")
-
-        # ✅ Stop metrics collection
-        stop_event.set()
-        metrics_thread.join()
-
         step_2_end = time.time()
 
         step_3_start = time.time()
@@ -143,40 +127,43 @@ async def diarize_audio(file: UploadFile = File(...)):
         error_trace = traceback.format_exc()
         logging.error(f"🚨 Unexpected Error: {e}\n{error_trace}")
 
-        error_log = {
-            "request_id": request_id,
-            "file": file.filename,
-            "error_message": str(e),
-            "traceback": error_trace,
-            "system_metrics_at_failure": get_system_metrics()
-        }
-        save_request_log(error_log)
+        if ENABLE_LOGGING:
+            error_log = {
+                "request_id": request_id,
+                "file": file.filename,
+                "error_message": str(e),
+                "traceback": error_trace,
+                "system_metrics_at_failure": get_system_metrics()
+            }
+            await save_request_log(error_log)
+
         return JSONResponse(status_code=500, content={"error": "Unexpected error occurred during processing."})
 
     # ✅ Capture final performance metrics
-    final_metrics = get_system_metrics()
+    final_metrics = get_system_metrics() if ENABLE_LOGGING else {}
     total_time = time.time() - start_time
 
-    # ✅ Save performance log
-    performance_data = {
-        "request_id": request_id,
-        "file": file.filename,
-        "file_size_bytes": file_size,
-        "completion_timestamp": datetime.datetime.now().isoformat(),
-        "processing_time_seconds": total_time,
-        "step_timings": {
-            "audio_conversion": step_1_end - step_1_start,
-            "diarization_processing": step_2_end - step_2_start,
-            "segment_extraction": step_3_end - step_3_start,
-        },
-        "system_metrics": {
-            "before_processing": initial_metrics,
-            "during_processing": during_processing_metrics,
-            "after_processing": final_metrics
-        },
-        "speakers": speaker_audio_segments
-    }
-    save_request_log(performance_data)
+    # ✅ Save performance log only if logging is enabled
+    if ENABLE_LOGGING:
+        performance_data = {
+            "request_id": request_id,
+            "file": file.filename,
+            "file_size_bytes": file_size,
+            "completion_timestamp": datetime.datetime.now().isoformat(),
+            "processing_time_seconds": total_time,
+            "step_timings": {
+                "audio_conversion": step_1_end - step_1_start,
+                "diarization_processing": step_2_end - step_2_start,
+                "segment_extraction": step_3_end - step_3_start,
+            },
+            "system_metrics": {
+                "before_processing": initial_metrics,
+                "during_processing": during_processing_metrics,
+                "after_processing": final_metrics
+            },
+            "speakers": speaker_audio_segments
+        }
+        await save_request_log(performance_data)
 
     # ✅ Return structured response with file URLs
     return {

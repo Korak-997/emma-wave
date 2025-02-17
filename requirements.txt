@@ -13,3 +13,4 @@ httpx
 numpy
 ffmpeg-python
 psutil
+aiofiles
