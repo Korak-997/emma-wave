@@ -1,52 +1,39 @@
 import io
-import uuid
-import base64
 import logging
-import soundfile as sf
-import numpy as np
 import ffmpeg
-import os
-
+import numpy as np
+import soundfile as sf
+import uuid
 from app.utils.exceptions import AudioProcessingError
 
-
-
-def convert_audio_format(input_audio):
+def convert_audio_format(audio_data, sample_rate):
     """
     Converts audio to 16-bit PCM, 16kHz, mono if necessary.
 
     Args:
-    - input_audio (bytes): The input audio file in bytes.
+    - audio_data (numpy array): The input audio as a NumPy array.
+    - sample_rate (int): The original sample rate of the audio.
 
     Returns:
-    - Converted audio in bytes (16-bit PCM, 16kHz, mono)
+    - Converted audio as a NumPy array.
     """
     try:
-        audio_buffer = io.BytesIO(input_audio)
+        # ✅ If already correct format, return
+        if sample_rate == 16000 and audio_data.ndim == 1:
+            return audio_data
 
-        # ✅ Read audio using SoundFile
-        audio_data, samplerate = sf.read(audio_buffer, dtype="int16")
-
-        # ✅ Check format (Must be: 16-bit PCM, 16kHz, mono)
-        if samplerate == 16000 and audio_data.ndim == 1:
-            logging.info("✅ Audio is already in the correct format.")
-            return input_audio
-
-        logging.warning(f"⚠️ Audio needs conversion (Found: {samplerate}Hz, Channels: {audio_data.shape[1] if audio_data.ndim > 1 else 1})")
+        logging.warning(f"⚠️ Audio needs conversion (Found: {sample_rate}Hz, Channels: {audio_data.shape[1] if audio_data.ndim > 1 else 1})")
 
         # ✅ Convert using FFmpeg
-        output_buffer = io.BytesIO()
-        process = (
+        output, _ = (
             ffmpeg
-            .input("pipe:0")
+            .input("pipe:0", format="s16le", acodec="pcm_s16le", ar=str(sample_rate))
             .output("pipe:1", format="wav", acodec="pcm_s16le", ar="16000", ac="1")
-            .run_async(pipe_stdin=True, pipe_stdout=True, pipe_stderr=True)
+            .run(input=audio_data.tobytes(), capture_stdout=True, capture_stderr=True)
         )
 
-        output_audio, _ = process.communicate(input_audio)
-
-        logging.info("✅ Audio successfully converted in-memory.")
-        return output_audio
+        # ✅ Return converted audio as NumPy array
+        return np.frombuffer(output, dtype="int16")
 
     except Exception as e:
         logging.error(f"🚨 Audio conversion failed: {e}")

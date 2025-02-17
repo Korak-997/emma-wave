@@ -1,7 +1,6 @@
 import logging
 import uuid
 import time
-import datetime
 from fastapi import APIRouter, File, UploadFile
 from fastapi.responses import JSONResponse
 from app.services.diarization_service import DiarizationProcessor
@@ -13,7 +12,6 @@ router = APIRouter(prefix="/diarize", tags=["Diarization"])
 diarization_processor = DiarizationProcessor()
 logging_service = LoggingService()
 
-@router.post("/")
 @router.post("/")
 async def diarize_audio(file: UploadFile = File(...)):
     """Process uploaded audio file for speaker diarization."""

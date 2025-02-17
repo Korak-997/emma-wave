@@ -3,10 +3,10 @@ import io
 import time
 import torch
 import os
+import numpy as np
 import soundfile as sf
 from pyannote.audio import Pipeline
 from app.utils.audio_utils import (
-    validate_audio_format,
     convert_audio_format,
     merge_speaker_segments,
     extract_speaker_segments
@@ -42,36 +42,37 @@ class DiarizationProcessor:
         """Process audio file for speaker diarization."""
         step_timings = {}
 
-        # ✅ Start Tracking Audio File Size & Metadata
+        # ✅ Track File Metadata
         file_metadata = {
             "file_name": file.filename,
             "file_size_bytes": file.size
         }
 
+        # ✅ Read and Load Audio Once
         original_audio = await file.read()
-        file_metadata["file_size_bytes"] = len(original_audio)  # Double-check file size
+        file_metadata["file_size_bytes"] = len(original_audio)
 
-        # ✅ Step 1: Audio Validation
+        # ✅ Step 1: Load Audio into NumPy Array
         step_1_start = time.time()
-        if not validate_audio_format(original_audio):
-            step_timings["audio_validation"] = time.time() - step_1_start
+        audio_data, sample_rate = sf.read(io.BytesIO(original_audio), dtype="int16")
+        step_timings["audio_loading"] = time.time() - step_1_start
 
-            # ✅ Step 2: Audio Conversion (if needed)
-            step_2_start = time.time()
-            original_audio = convert_audio_format(original_audio)
-            step_timings["audio_conversion"] = time.time() - step_2_start
-        else:
-            step_timings["audio_validation"] = time.time() - step_1_start
+        # ✅ Step 2: Validate and Convert if Needed
+        step_2_start = time.time()
+        if sample_rate != 16000 or audio_data.ndim > 1:
+            audio_data = convert_audio_format(audio_data, sample_rate)
+        step_timings["audio_conversion"] = time.time() - step_2_start
 
-        # ✅ Step 3: Move Input Audio to GPU if enabled
+        # ✅ Move Input Audio to GPU if enabled
         step_3_start = time.time()
-        audio_tensor = torch.tensor(bytearray(original_audio)).to(self.device)  # ✅ Move audio to GPU (if enabled)
+        if USE_GPU:
+            audio_tensor = torch.tensor(audio_data).to(self.device)
         step_timings["audio_gpu_transfer"] = time.time() - step_3_start
 
-        # ✅ Step 4: Speaker Diarization Processing (Using `torch.no_grad()`)
+        # ✅ Step 4: Speaker Diarization Processing
         step_4_start = time.time()
-        with torch.no_grad():  # ✅ Speed up inference by disabling gradients
-            diarization_result = self.pipeline(io.BytesIO(original_audio))  # ✅ Run inference
+        with torch.no_grad():
+            diarization_result = self.pipeline(io.BytesIO(original_audio))
         step_timings["diarization_processing"] = time.time() - step_4_start
 
         # ✅ Step 5: Extract Speakers & Merge Segments
