@@ -188,5 +188,5 @@ The Pyannote model takes time to process. If it seems stuck:
 start server on remote machines
 
 ```plaintext
-uvicorn app.main:app --host 0.0.0.0 --port 7000 --reload
+PYTHONPATH=$(pwd) uvicorn app.main:app --host 0.0.0.0 --port 7000 --reload
 ```
