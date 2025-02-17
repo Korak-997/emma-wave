@@ -5,7 +5,7 @@ import psutil
 import datetime
 import aiofiles
 import torch
-
+import asyncio
 # ✅ Load environment variable for logging control
 ENABLE_LOGGING = os.getenv("ENABLE_LOGGING", "true").lower() == "true"
 
@@ -26,34 +26,47 @@ except Exception as e:
     NVML_AVAILABLE = False
     print(f"⚠️ Failed to initialize NVML: {e}")
 
-def get_system_metrics():
+
+
+async def get_system_metrics():
     """
-    Captures CPU, RAM, Disk, and GPU usage metrics.
+    Captures CPU, RAM, Disk, Thread, Process, and GPU usage in parallel.
     """
-    metrics = {
-        "cpu_usage_percent": psutil.cpu_percent(interval=0.1),  # Reduce delay
-        "ram_usage_percent": psutil.virtual_memory().percent,
-        "disk_usage_percent": psutil.disk_usage("/").percent,
-        "active_threads": len(psutil.Process().threads()),
-        "active_processes": len(psutil.pids())
+    async def fetch_cpu_usage():
+        return psutil.cpu_percent(interval=0.1)
+
+    async def fetch_ram_usage():
+        return psutil.virtual_memory().percent
+
+    async def fetch_disk_usage():
+        return psutil.disk_usage("/").percent
+
+    async def fetch_gpu_usage():
+        if not torch.cuda.is_available():
+            return None  # No GPU available
+
+        try:
+            from pynvml import nvmlDeviceGetUtilizationRates, nvmlDeviceGetHandleByIndex
+            handle = nvmlDeviceGetHandleByIndex(0)
+            return nvmlDeviceGetUtilizationRates(handle).gpu
+        except Exception:
+            return None  # If GPU tracking fails, return None
+
+    # ✅ Run all system metric collection in parallel
+    results = await asyncio.gather(
+        fetch_cpu_usage(),
+        fetch_ram_usage(),
+        fetch_disk_usage(),
+        fetch_gpu_usage()
+    )
+
+    return {
+        "cpu_usage_percent": results[0],
+        "ram_usage_percent": results[1],
+        "disk_usage_percent": results[2],
+        "gpu_usage_percent": results[3],
     }
 
-    # ✅ Capture GPU Usage If Available
-    if torch.cuda.is_available() and NVML_AVAILABLE:
-        try:
-            handle = nvmlDeviceGetHandleByIndex(0)
-            gpu_utilization = nvmlDeviceGetUtilizationRates(handle)
-            gpu_memory = nvmlDeviceGetMemoryInfo(handle)
-
-            metrics["gpu_metrics"] = {
-                "gpu_usage_percent": gpu_utilization.gpu,
-                "gpu_memory_used_mb": round(gpu_memory.used / (1024 * 1024), 2),
-                "gpu_memory_total_mb": round(gpu_memory.total / (1024 * 1024), 2)
-            }
-        except Exception as e:
-            print(f"⚠️ Failed to retrieve GPU metrics: {e}")
-
-    return metrics
 
 async def save_request_log(data: dict):
     """

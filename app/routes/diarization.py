@@ -14,26 +14,25 @@ diarization_processor = DiarizationProcessor()
 logging_service = LoggingService()
 
 @router.post("/")
+@router.post("/")
 async def diarize_audio(file: UploadFile = File(...)):
     """Process uploaded audio file for speaker diarization."""
     request_id = str(uuid.uuid4())
     start_time = time.time()
 
-    # ✅ Capture initial system metrics
-    initial_metrics = get_system_metrics()
-
     logging.info(f"📥 Received file: {file.filename}, Content-Type: {file.content_type}")
+
+    # ✅ Fix: Await system metrics collection properly
+    initial_metrics = await get_system_metrics()
 
     try:
         # ✅ Process audio
         result = await diarization_processor.process_audio(file, request_id)
         result["processing_time_seconds"] = time.time() - start_time
 
-        # ✅ Capture final system metrics
-        result["system_metrics"] = {
-            "before_processing": initial_metrics,
-            "after_processing": get_system_metrics(),
-        }
+        # ✅ Ensure "system_metrics" exists before assigning subkeys
+        result.setdefault("system_metrics", {})
+        result["system_metrics"]["before_processing"] = initial_metrics
 
         # ✅ Save logs
         await logging_service.save_log(request_id, result)
