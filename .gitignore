@@ -13,3 +13,4 @@ __pycache__/
 # Ignore environment variables (Tokens, API Keys)
 .env
 saved_audio/
+logs/

@@ -2,9 +2,10 @@ import logging
 import io
 import os
 import uuid
+import time
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pyannote.audio import Pipeline
 from app.utils.audio_utils import (
     convert_audio_format,
@@ -14,6 +15,7 @@ from app.utils.audio_utils import (
 )
 from app.utils.config import get_huggingface_token
 from app.utils.exceptions import InvalidAudioFormatError, AudioProcessingError, ModelLoadingError
+from app.utils.logging_utils import save_request_log, get_system_metrics
 
 # ✅ Configure Logging
 logging.basicConfig(
@@ -68,22 +70,32 @@ except Exception as e:
 async def diarize_audio(file: UploadFile = File(...)):
     """
     Process an uploaded audio file, segment it by speakers, and return results.
+    Tracks performance and system resource usage.
     """
+    request_id = str(uuid.uuid4())
+    start_time = time.time()
+    initial_metrics = get_system_metrics()
+
     logging.info(f"📥 Received file: {file.filename}, Content-Type: {file.content_type}")
 
     # ✅ Read file into memory
     original_audio = await file.read()
 
     try:
+        step_1_start = time.time()
         # ✅ Validate format before processing
         if not validate_audio_format(original_audio):
             original_audio = convert_audio_format(original_audio)  # Convert in-memory
+        step_1_end = time.time()
 
+        step_2_start = time.time()
         # ✅ Process the file using Pyannote
         logging.info("🔄 Processing audio for diarization...")
         diarization_result = pipeline(io.BytesIO(original_audio))
         logging.info("✅ Speaker diarization completed!")
+        step_2_end = time.time()
 
+        step_3_start = time.time()
         # ✅ Extract speaker segments
         raw_segments = [
             {"speaker": speaker, "start": round(segment.start, 2), "end": round(segment.end, 2)}
@@ -95,22 +107,68 @@ async def diarize_audio(file: UploadFile = File(...)):
 
         # ✅ Extract and save speaker-specific audio clips
         speaker_audio_segments = extract_speaker_segments(original_audio, merged_segments, AUDIO_SAVE_PATH, AUDIO_URL_BASE)
+        step_3_end = time.time()
 
         logging.info(f"📊 Processed {len(merged_segments)} merged segments from {file.filename}")
 
-    except InvalidAudioFormatError as e:
-        raise e
-    except AudioProcessingError as e:
-        raise e
+    except (InvalidAudioFormatError, AudioProcessingError) as e:
+        logging.error(f"🚨 Processing Error: {e}")
+        return JSONResponse(status_code=400, content={"error": str(e)})
     except Exception as e:
-        logging.error(f"🚨 Error processing audio: {e}")
-        raise AudioProcessingError("Unexpected error occurred during processing.")
+        logging.error(f"🚨 Unexpected Error: {e}")
+        return JSONResponse(status_code=500, content={"error": "Unexpected error occurred during processing."})
+
+    # ✅ Capture final performance metrics
+    final_metrics = get_system_metrics()
+    total_time = time.time() - start_time
+
+    # ✅ Save performance log
+    performance_data = {
+        "request_id": request_id,
+        "file": file.filename,
+        "processing_time_seconds": total_time,
+        "step_timings": {
+            "audio_conversion": step_1_end - step_1_start,
+            "diarization_processing": step_2_end - step_2_start,
+            "segment_extraction": step_3_end - step_3_start,
+        },
+        "system_metrics": {
+            "before_processing": initial_metrics,
+            "after_processing": final_metrics
+        },
+        "speakers": speaker_audio_segments
+    }
+    save_request_log(performance_data)
 
     # ✅ Return structured response with file URLs
     return {
+        "request_id": request_id,
         "file": file.filename,
+        "processing_time_seconds": total_time,
         "speakers": speaker_audio_segments
     }
+
+@app.get("/logs")
+async def list_logs():
+    """
+    Lists all saved performance logs.
+    """
+    try:
+        logs = [f for f in os.listdir("logs") if f.endswith(".json")]
+        return {"logs": logs}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"Failed to list logs: {str(e)}"})
+
+@app.get("/logs/{log_filename}")
+async def get_log(log_filename: str):
+    """
+    Returns a specific performance log by filename.
+    """
+    log_path = os.path.join("logs", log_filename)
+    if os.path.exists(log_path):
+        with open(log_path, "r", encoding="utf-8") as log_file:
+            return json.load(log_file)
+    return JSONResponse(status_code=404, content={"error": "Log file not found"})
 
 @app.get("/health")
 async def health_check():
@@ -121,9 +179,7 @@ async def health_check():
         # ✅ Check if the diarization model is loaded
         if not pipeline:
             raise RuntimeError("Diarization model is not loaded.")
-
         return {"status": "ok", "model": "loaded"}
-
     except Exception as e:
         logging.error(f"🚨 Health check failed: {e}")
         return {"status": "error", "message": str(e)}
