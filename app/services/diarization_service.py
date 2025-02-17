@@ -13,13 +13,13 @@ from app.utils.audio_utils import (
 )
 from app.utils.config import get_huggingface_token
 
-
 # ✅ Load Environment Variable
 USE_GPU = os.getenv("USE_GPU", "false").lower() == "true"  # Convert to boolean
 
 class DiarizationProcessor:
     def __init__(self):
         self.pipeline = self.load_pipeline()
+        torch.set_grad_enabled(False)  # ✅ Disable gradient computation globally for inference speedup
 
     def load_pipeline(self):
         """Load Pyannote model and respect GPU/CPU setting."""
@@ -27,12 +27,15 @@ class DiarizationProcessor:
         pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization", use_auth_token=get_huggingface_token())
 
         if USE_GPU and torch.cuda.is_available():
-            pipeline.to(torch.device("cuda"))  # ✅ Use GPU
+            device = torch.device("cuda")
+            pipeline.to(device)  # ✅ Move model to GPU
             logging.info("🚀 Pyannote model moved to GPU.")
         else:
-            pipeline.to(torch.device("cpu"))  # ✅ Force CPU mode
+            device = torch.device("cpu")
+            pipeline.to(device)  # ✅ Force CPU mode
             logging.info("⚡ Pyannote model running on CPU.")
 
+        self.device = device  # ✅ Store device reference for input processing
         return pipeline
 
     async def process_audio(self, file, request_id):
@@ -46,7 +49,7 @@ class DiarizationProcessor:
         }
 
         original_audio = await file.read()
-        file_metadata["file_size_bytes"] = len(original_audio)  # Double check file size
+        file_metadata["file_size_bytes"] = len(original_audio)  # Double-check file size
 
         # ✅ Step 1: Audio Validation
         step_1_start = time.time()
@@ -60,30 +63,34 @@ class DiarizationProcessor:
         else:
             step_timings["audio_validation"] = time.time() - step_1_start
 
-        # ✅ Step 3: Speaker Diarization Processing
+        # ✅ Step 3: Move Input Audio to GPU if enabled
         step_3_start = time.time()
-        diarization_result = self.pipeline(io.BytesIO(original_audio))
-        step_timings["diarization_processing"] = time.time() - step_3_start
+        audio_tensor = torch.tensor(bytearray(original_audio)).to(self.device)  # ✅ Move audio to GPU (if enabled)
+        step_timings["audio_gpu_transfer"] = time.time() - step_3_start
 
-        # ✅ Step 4: Extract Speakers & Merge Segments
+        # ✅ Step 4: Speaker Diarization Processing (Using `torch.no_grad()`)
         step_4_start = time.time()
+        with torch.no_grad():  # ✅ Speed up inference by disabling gradients
+            diarization_result = self.pipeline(io.BytesIO(original_audio))  # ✅ Run inference
+        step_timings["diarization_processing"] = time.time() - step_4_start
+
+        # ✅ Step 5: Extract Speakers & Merge Segments
+        step_5_start = time.time()
         raw_segments = [
             {"speaker": speaker, "start": round(segment.start, 2), "end": round(segment.end, 2)}
             for segment, _, speaker in diarization_result.itertracks(yield_label=True)
         ]
         merged_segments = merge_speaker_segments(raw_segments)
-        step_timings["segmentation_extraction"] = time.time() - step_4_start
+        step_timings["segmentation_extraction"] = time.time() - step_5_start
 
-        # ✅ Step 5: Extract & Save Speaker-Specific Audio Clips
-        step_5_start = time.time()
+        # ✅ Step 6: Extract & Save Speaker-Specific Audio Clips
+        step_6_start = time.time()
         speaker_audio_segments = extract_speaker_segments(original_audio, merged_segments, "saved_audio", "http://localhost:7000/audio")
-        step_timings["segment_extraction"] = time.time() - step_5_start
+        step_timings["segment_extraction"] = time.time() - step_6_start
 
-        # ✅ Step 6: Capture GPU Metrics
-        gpu_metrics = {
-            "used": USE_GPU
-        }
-        if USE_GPU:
+        # ✅ Step 7: Capture GPU Metrics
+        gpu_metrics = {"used": USE_GPU}
+        if USE_GPU and torch.cuda.is_available():
             gpu_metrics.update({
                 "gpu_usage_percent": torch.cuda.utilization(0),
                 "gpu_memory_used_mb": round(torch.cuda.memory_allocated(0) / (1024 * 1024), 2),
