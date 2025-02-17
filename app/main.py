@@ -3,7 +3,10 @@ import io
 import os
 import uuid
 import time
-from datetime import datetime
+import datetime
+import traceback
+import threading
+import psutil
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -16,7 +19,7 @@ from app.utils.audio_utils import (
 )
 from app.utils.config import get_huggingface_token
 from app.utils.exceptions import InvalidAudioFormatError, AudioProcessingError, ModelLoadingError
-from app.utils.logging_utils import save_request_log, get_system_metrics, get_gpu_metrics
+from app.utils.logging_utils import save_request_log, get_system_metrics
 
 # ✅ Configure Logging
 logging.basicConfig(
@@ -55,7 +58,6 @@ async def get_audio(filename: str):
         return {"error": "File not found"}
     return FileResponse(file_path, media_type="audio/wav")
 
-
 # ✅ Load the diarization pipeline
 try:
     logging.info("⏳ Loading Pyannote Speaker Diarization Model...")
@@ -65,6 +67,16 @@ except Exception as e:
     logging.error(f"🚨 Failed to load Pyannote model: {e}")
     raise ModelLoadingError()
 
+def collect_system_metrics(during_processing_metrics, stop_event):
+    """
+    Collects system metrics every 5 seconds until diarization finishes.
+    """
+    while not stop_event.is_set():
+        time.sleep(5)
+        during_processing_metrics.append({
+            "timestamp": datetime.datetime.now().isoformat(),
+            "system": get_system_metrics(),
+        })
 
 @app.post("/diarize")
 async def diarize_audio(file: UploadFile = File(...)):
@@ -75,12 +87,12 @@ async def diarize_audio(file: UploadFile = File(...)):
     request_id = str(uuid.uuid4())
     start_time = time.time()
     initial_metrics = get_system_metrics()
-    initial_gpu_metrics = get_gpu_metrics()
 
     logging.info(f"📥 Received file: {file.filename}, Content-Type: {file.content_type}")
 
     # ✅ Read file into memory
     original_audio = await file.read()
+    file_size = len(original_audio)  # Get size of uploaded file
 
     try:
         step_1_start = time.time()
@@ -91,18 +103,21 @@ async def diarize_audio(file: UploadFile = File(...)):
 
         step_2_start = time.time()
         during_processing_metrics = []
-        # ✅ Process the file using Pyannote
+
+        # ✅ Start background system metrics collection
+        stop_event = threading.Event()
+        metrics_thread = threading.Thread(target=collect_system_metrics, args=(during_processing_metrics, stop_event))
+        metrics_thread.start()
+
+        # ✅ Start diarization process
         logging.info("🔄 Processing audio for diarization...")
         diarization_result = pipeline(io.BytesIO(original_audio))
-
-        # ✅ Capture intermediate system metrics
-        during_processing_metrics.append({
-            "timestamp": datetime.now().isoformat(),
-            "system": get_system_metrics(),
-            "gpu": get_gpu_metrics()
-        })
-
         logging.info("✅ Speaker diarization completed!")
+
+        # ✅ Stop metrics collection
+        stop_event.set()
+        metrics_thread.join()
+
         step_2_end = time.time()
 
         step_3_start = time.time()
@@ -125,18 +140,29 @@ async def diarize_audio(file: UploadFile = File(...)):
         logging.error(f"🚨 Processing Error: {e}")
         return JSONResponse(status_code=400, content={"error": str(e)})
     except Exception as e:
-        logging.error(f"🚨 Unexpected Error: {e}")
+        error_trace = traceback.format_exc()
+        logging.error(f"🚨 Unexpected Error: {e}\n{error_trace}")
+
+        error_log = {
+            "request_id": request_id,
+            "file": file.filename,
+            "error_message": str(e),
+            "traceback": error_trace,
+            "system_metrics_at_failure": get_system_metrics()
+        }
+        save_request_log(error_log)
         return JSONResponse(status_code=500, content={"error": "Unexpected error occurred during processing."})
 
     # ✅ Capture final performance metrics
     final_metrics = get_system_metrics()
-    final_gpu_metrics = get_gpu_metrics()
     total_time = time.time() - start_time
 
     # ✅ Save performance log
     performance_data = {
         "request_id": request_id,
         "file": file.filename,
+        "file_size_bytes": file_size,
+        "completion_timestamp": datetime.datetime.now().isoformat(),
         "processing_time_seconds": total_time,
         "step_timings": {
             "audio_conversion": step_1_end - step_1_start,
@@ -147,10 +173,6 @@ async def diarize_audio(file: UploadFile = File(...)):
             "before_processing": initial_metrics,
             "during_processing": during_processing_metrics,
             "after_processing": final_metrics
-        },
-        "gpu_metrics": {
-            "before_processing": initial_gpu_metrics,
-            "after_processing": final_gpu_metrics
         },
         "speakers": speaker_audio_segments
     }
