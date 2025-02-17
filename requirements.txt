@@ -14,3 +14,4 @@ numpy
 ffmpeg-python
 psutil
 aiofiles
+nvidia-ml-py
