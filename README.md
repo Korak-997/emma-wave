@@ -1,192 +1,208 @@
-# 🎤 EmmaWave
+# 📖 EmmaWave Developer Documentation
 
-**EmmaWave** is a FastAPI-based service that performs **speaker diarization** (detecting and separating different speakers in an audio file) using **Pyannote-Audio**.
+## 📌 Overview
 
-This guide provides a **step-by-step setup** for installing, running, and developing the project.
+**EmmaWave** is a FastAPI-based application that performs **Speaker Diarization**, meaning it can detect and separate different speakers in an audio file. It uses **Pyannote-Audio**, a Hugging Face-based deep learning model, to achieve accurate speaker detection.
 
----
+### 🚀 Features
 
-## 🚀 Features
-
-- 📂 **Upload an audio file** via FastAPI.
-- 🎙️ **Detect and separate speakers** in the file.
-- 🔗 **Uses Hugging Face models** for advanced speaker recognition.
-- 🖥️ **FastAPI-based backend** for easy deployment.
-
----
-
-## 🛠️ **1. Prerequisites**
-
-Before you start, make sure you have:
-
-- **Python 3.10 or later**
-- **Ubuntu 24 LTS (or another Linux-based OS recommended)**
-- **Hugging Face account** (to access the diarization model).
-  > **in case you use the already generated Hugging Face token you do not need to do this step**
+- **📂 Upload Audio Files:** Users can upload `.wav` files for analysis.
+- **🎙️ Speaker Identification:** Detects and separates speakers in an audio file.
+- **🔗 Hugging Face Model:** Utilizes `pyannote/speaker-diarization` for speaker recognition.
+- **🖥️ API Endpoints:** Provides REST API for audio processing.
+- **📤 Log Management:** Saves logs asynchronously for analysis.
+- **🔥 GPU Acceleration:** Supports CUDA for faster processing if a GPU is available.
 
 ---
 
-## 🔧 **2. Installation**
+## 🛠️ Installation Guide
 
-### 2.1 **Clone the Repository**
+### **Step 1: Update & Install System Packages**
+
+On a fresh **Ubuntu 24 LTS** installation, run:
 
 ```bash
-YET NOT ON GITHUB !!!!
+sudo apt update && sudo apt upgrade -y
+sudo apt install python3 python3-pip python3-venv git ffmpeg
 ```
 
-### 2.2 **Create a Virtual Environment**
+- `python3, pip3, venv`: Required for running the app.
+- `git`: Required if cloning from a repository.
+- `ffmpeg`: Used for audio processing.
 
-- run these commands in the root of the project
+### **Step 2: Clone the Project (If Hosted on GitHub)**
+
+```bash
+git clone https://github.com/your-repo/emmawave.git
+cd emmawave
+```
+
+### **Step 3: Create a Virtual Environment**
 
 ```bash
 python3 -m venv pyannote-env
 source pyannote-env/bin/activate
 ```
 
-### 2.3 **Install Dependencies**
+### **Step 4: Install Python Dependencies**
 
 ```bash
 pip install -r requirements.txt
 ```
 
----
+This installs:
 
-## 🛠️ **3. Configuration**
+- **FastAPI & Uvicorn** (for running the server)
+- **Pyannote-Audio** (for speaker diarization)
+- **Torch & Torchaudio** (for deep learning inference)
+- **Soundfile, FFmpeg-Python, and NumPy** (for audio processing)
 
-### 3.1 **Create a `.env` File** or rename `.env.example` to `.env`
+### **Step 5: Configure Environment Variables**
 
-update the `.env` file with your Hugging Face access token
+Copy the example `.env` file and modify it:
+
+```bash
+cp .env_example .env
+nano .env
+```
+
+Modify the following values:
 
 ```ini
-HUGGING_FACE_ACCESS_TOKEN= REPLACE_ACCESS_TOKEN_HERE
+HUGGING_FACE_ACCESS_TOKEN="YOUR_ACCESS_TOKEN"
+SERVER_IP="0.0.0.0"
+ENABLE_LOGGING=true
+USE_GPU=true
+```
+
+Ensure you replace `YOUR_ACCESS_TOKEN` with a valid Hugging Face API token.
+
+---
+
+## 🚀 Running the Application
+
+### **Step 1: Activate the Virtual Environment**
+
+```bash
+source pyannote-env/bin/activate
+```
+
+### **Step 2: Start the Server**
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 7000 --reload
+```
+
+- `--host 0.0.0.0` allows external access.
+- `--port 7000` sets the server port.
+- `--reload` enables automatic reloading during development.
+
+### **Step 3: Test API Endpoints**
+
+#### **1. Upload an Audio File**
+
+```bash
+curl -X POST -F "file=@/path/to/audio.wav" http://127.0.0.1:7000/diarize/
+```
+
+#### **2. Fetch Logs**
+
+```bash
+curl http://127.0.0.1:7000/logs/
 ```
 
 ---
 
-## 🚀 **4. Running the Server**
+## 🏗️ Application Workflow Diagram
 
-With everything set up, start the FastAPI server:
-
-```bash
-uvicorn app.main:app --reload --port 8000
-```
-
-If successful, you should see output like:
-
-```
-INFO:     Uvicorn running on http://127.0.0.1:8000
-```
-
----
-
-## 📤 **5. Testing the API**
-
-### **5.1 Upload an Audio File (Using `curl`)**
-
-```bash
-curl -X POST -F "file=@/path/to/your/audio.wav" http://127.0.0.1:8000/diarize
-```
-
-### **5.2 Expected JSON Response**
-
-```json
-{
-  "segments": [
-    { "speaker": "SPEAKER_00", "start": 0.2, "end": 2.5 },
-    { "speaker": "SPEAKER_01", "start": 3.0, "end": 6.7 }
-  ]
-}
-```
-
-### **5.3 Restarting the Server After Changes**
-
-The server automatically reloads with:
-
-```bash
-uvicorn app.main:app --reload
+```mermaid
+graph TD;
+    A[User Uploads Audio] -->|FastAPI Receives File| B[Audio Processing Begins];
+    B -->|Validate Format| C[Convert If Necessary];
+    C -->|Send to Pyannote Model| D[Diarization Model];
+    D -->|Extract Speaker Segments| E[Save Extracted Audio];
+    E -->|Generate Response| F[Return JSON Result];
+    F -->|Provide Download Links| G[Client Receives Data];
+    E -->|Save Logs| H[Logs Saved];
 ```
 
 ---
 
-## 🏗️ **7. Folder Structure**
+## 📁 File Structure & Explanation
 
 ```
-speaker-detector-server/
-├── app/                # Main FastAPI application
-│   ├── main.py         # FastAPI server logic
-│   ├── requirements.txt # Dependencies list
-├── pyannote-env/       # Virtual environment (excluded from Git)
-├── .env                # Hugging Face token (excluded from Git)
-├── .gitignore          # Files to ignore in Git
-└── README.md           # This file
+root/
+├── app/
+│   ├── main.py               # FastAPI main server file
+│   ├── routes/               # API endpoints
+│   │   ├── audio.py          # Serve audio files
+│   │   ├── diarization.py    # Speaker diarization endpoint
+│   │   ├── logs.py           # Log management endpoint
+│   │   ├── health.py         # Health check API
+│   ├── services/             # Core logic modules
+│   │   ├── diarization_service.py  # Speaker diarization logic
+│   │   ├── logging_service.py      # Logging operations
+│   ├── utils/                # Helper modules
+│   │   ├── audio_utils.py    # Audio processing functions
+│   │   ├── config.py         # Configuration settings
+│   │   ├── exceptions.py     # Custom error handling
+│   │   ├── logging_utils.py  # System logging & metrics
+├── .env                      # Environment variables
+├── requirements.txt           # Python dependencies
+└── README.md                  # Project documentation
 ```
-
-Here’s the **"Running Tests"** section for your **README.md**:
 
 ---
 
-## 🧪 Running Tests
+## 📄 Detailed File Explanations
 
-To ensure the diarization API is working correctly, you can run automated tests using **pytest**.
+### **1️⃣ `main.py` (FastAPI Server Initialization)**
 
-#### **1️⃣ Prerequisites**
+Handles:
 
-Make sure you have:
+- Middleware setup (CORS)
+- Route registration
+- Running the Uvicorn server
 
-- Activated your Python virtual environment:
-  ```bash
-  source pyannote-env/bin/activate
-  ```
-- Installed all dependencies:
-  ```bash
-  pip install -r requirements.txt
-  ```
-- A valid **Hugging Face API Token** in your `.env` file.
+#### **Snippet**:
 
-#### **2️⃣ Running All Tests**
-
-Run all tests using:
-
-```bash
-PYTHONPATH=$(pwd) pytest -s -v tests/
+```python
+app = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"], allow_credentials=True)
 ```
 
-- `-s` → Shows print statements in real time.
-- `-v` → Enables verbose output for better debugging.
+---
 
-#### **3️⃣ Running a Specific Test**
+### **2️⃣ `diarization_service.py` (Speaker Diarization Logic)**
 
-If you want to test only the diarization API, run:
+- Loads `pyannote/speaker-diarization` model.
+- Processes the audio file and extracts speaker segments.
 
-```bash
-PYTHONPATH=$(pwd) pytest -s -v tests/test_diarization.py
+#### **Snippet**:
+
+```python
+self.pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization", use_auth_token=get_huggingface_token())
 ```
 
-#### **4️⃣ Expected Output**
+---
 
-If everything is working, you should see:
+### **3️⃣ `audio_utils.py` (Audio Processing Helper)**
 
-```
-✅ Test Passed: Diarization API is working correctly!
-```
+Handles:
 
-#### **5️⃣ Debugging Slow Execution**
+- **Conversion to 16-bit PCM, 16kHz mono** (if needed).
+- **Extracting speaker segments** from original audio.
 
-The Pyannote model takes time to process. If it seems stuck:
+#### **Snippet**:
 
-- Make sure the API server is **running** before testing:
-  ```bash
-  uvicorn app.main:app --reload --port 8000
-  ```
-- If it's too slow, **run the API manually** using:
-  ```bash
-  curl -X POST -F "file=@tests/sample_audio.wav" http://127.0.0.1:8000/diarize
-  ```
-
-#####
-
-start server on remote machines
-
-```plaintext
-PYTHONPATH=$(pwd) uvicorn app.main:app --host 0.0.0.0 --port 7000 --reload
+```python
+def convert_audio_format(audio_data, sample_rate):
+    if sample_rate == 16000 and audio_data.ndim == 1:
+        return audio_data
+    output, _ = (
+        ffmpeg.input("pipe:0", format="s16le", ar=str(sample_rate))
+        .output("pipe:1", format="wav", ar="16000", ac="1")
+        .run(input=audio_data.tobytes(), capture_stdout=True)
+    )
+    return np.frombuffer(output, dtype="int16")
 ```
