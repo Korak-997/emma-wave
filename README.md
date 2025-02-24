@@ -90,9 +90,10 @@ source pyannote-env/bin/activate
 ### **Step 2: Start the Server**
 
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 7000 --reload
+PYTHONPATH=$(pwd) uvicorn app.main:app --host 0.0.0.0 --port 7000 --reload
 ```
 
+- `PYTHONPATH=$(pwd)`: Ensures all modules are correctly recognized.
 - `--host 0.0.0.0` allows external access.
 - `--port 7000` sets the server port.
 - `--reload` enables automatic reloading during development.
@@ -113,96 +114,88 @@ curl http://127.0.0.1:7000/logs/
 
 ---
 
-## 🏗️ Application Workflow Diagram
+## 🛠️ Debugging NVIDIA Driver & Secure Boot Issues
 
-```mermaid
-graph TD;
-    A[User Uploads Audio] -->|FastAPI Receives File| B[Audio Processing Begins];
-    B -->|Validate Format| C[Convert If Necessary];
-    C -->|Send to Pyannote Model| D[Diarization Model];
-    D -->|Extract Speaker Segments| E[Save Extracted Audio];
-    E -->|Generate Response| F[Return JSON Result];
-    F -->|Provide Download Links| G[Client Receives Data];
-    E -->|Save Logs| H[Logs Saved];
+### ✅ **Check If GPU is Detected**
+
+Run:
+
+```bash
+python3 -c "import torch; print(torch.cuda.is_available())"
 ```
 
----
+- **Expected Output:** `True`
+- **If False:** The GPU is not detected properly.
 
-## 📁 File Structure & Explanation
+### ✅ **Check Installed NVIDIA Drivers**
 
-```
-root/
-├── app/
-│   ├── main.py               # FastAPI main server file
-│   ├── routes/               # API endpoints
-│   │   ├── audio.py          # Serve audio files
-│   │   ├── diarization.py    # Speaker diarization endpoint
-│   │   ├── logs.py           # Log management endpoint
-│   │   ├── health.py         # Health check API
-│   ├── services/             # Core logic modules
-│   │   ├── diarization_service.py  # Speaker diarization logic
-│   │   ├── logging_service.py      # Logging operations
-│   ├── utils/                # Helper modules
-│   │   ├── audio_utils.py    # Audio processing functions
-│   │   ├── config.py         # Configuration settings
-│   │   ├── exceptions.py     # Custom error handling
-│   │   ├── logging_utils.py  # System logging & metrics
-├── .env                      # Environment variables
-├── requirements.txt           # Python dependencies
-└── README.md                  # Project documentation
+Check available drivers:
+
+```bash
+ubuntu-drivers devices
 ```
 
----
+This will list available NVIDIA drivers and recommend the best one.
 
-## 📄 Detailed File Explanations
+To check currently installed drivers:
 
-### **1️⃣ `main.py` (FastAPI Server Initialization)**
-
-Handles:
-
-- Middleware setup (CORS)
-- Route registration
-- Running the Uvicorn server
-
-#### **Snippet**:
-
-```python
-app = FastAPI()
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"], allow_credentials=True)
+```bash
+dpkg -l | grep -i nvidia
 ```
 
----
+### ✅ **Install or Update NVIDIA Drivers**
 
-### **2️⃣ `diarization_service.py` (Speaker Diarization Logic)**
+To install the recommended driver (e.g., `nvidia-driver-550`):
 
-- Loads `pyannote/speaker-diarization` model.
-- Processes the audio file and extracts speaker segments.
-
-#### **Snippet**:
-
-```python
-self.pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization", use_auth_token=get_huggingface_token())
+```bash
+sudo apt install nvidia-driver-550
+sudo reboot
 ```
 
----
+After reboot:
 
-### **3️⃣ `audio_utils.py` (Audio Processing Helper)**
-
-Handles:
-
-- **Conversion to 16-bit PCM, 16kHz mono** (if needed).
-- **Extracting speaker segments** from original audio.
-
-#### **Snippet**:
-
-```python
-def convert_audio_format(audio_data, sample_rate):
-    if sample_rate == 16000 and audio_data.ndim == 1:
-        return audio_data
-    output, _ = (
-        ffmpeg.input("pipe:0", format="s16le", ar=str(sample_rate))
-        .output("pipe:1", format="wav", ar="16000", ac="1")
-        .run(input=audio_data.tobytes(), capture_stdout=True)
-    )
-    return np.frombuffer(output, dtype="int16")
+```bash
+nvidia-smi
 ```
+
+### ✅ **Disable Secure Boot (Recommended Fix)**
+
+Secure Boot can block the NVIDIA driver. To disable it:
+
+1. **Reboot** and enter the BIOS/UEFI settings.
+2. Locate **Secure Boot** (usually under Boot or Security settings).
+3. **Disable it** and **Save & Exit**.
+4. Check again with:
+   ```bash
+   mokutil --sb-state
+   ```
+   - Expected output: `SecureBoot disabled`
+
+### ✅ **Manually Reinstall NVIDIA Driver (If Needed)**
+
+```bash
+sudo apt remove --purge '^nvidia-.*'
+sudo apt autoremove
+sudo apt clean
+sudo apt install nvidia-driver-550
+sudo reboot
+```
+
+After reboot:
+
+```bash
+nvidia-smi
+```
+
+### ✅ **Verify PyTorch CUDA Support**
+
+```bash
+python3 -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.device_count()); print(torch.cuda.get_device_name(0))"
+```
+
+- Expected Output:
+  ```
+  True
+  1
+  NVIDIA GeForce RTX 3060 Ti
+  ```
